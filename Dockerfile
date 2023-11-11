@@ -1,4 +1,4 @@
-FROM --platform=linux/arm64 python:3.11-slim-bookworm
+FROM --platform=linux/arm64 python:slim
 
 RUN apt-get update && \
     apt-get install -y gcc
