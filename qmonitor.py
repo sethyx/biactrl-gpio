@@ -27,11 +27,11 @@ RFProtocol = namedtuple('RFProtocol',
                        'sync_count', 'sync_delay',
                        'sync_high', 'sync_low',
                        'zero_high', 'zero_low',
-                       'one_high', 'one_low'])
+                       'one_high', 'one_low', 'repeat_count'])
 
 PROTOCOLS = (None,
-             RFProtocol(100, 40, 10000, 1, 0, 5000, 1500, 3, 8, 7, 4), # "home smart" shutter
-             RFProtocol(300, 24, 0, 1, 0, 300, 9000, 1, 3, 3, 1) # LED controller
+             RFProtocol(100, 40, 10000, 1, 0, 5000, 1500, 3, 8, 7, 4, 6), # "home smart" shutter
+             RFProtocol(300, 24, 0, 1, 0, 300, 9000, 1, 3, 3, 1, 4) # LED controller
              )
 
 DEVICE_CODES = {}
@@ -44,74 +44,72 @@ class RFDevice:
         self.controller = DigitalOutputDevice(gpio, active_high=True, initial_value=False)
         _LOGGER.debug("Using GPIO " + str(gpio))
 
-    def set_protocol(self, tx_proto, tx_repeat):
+    def set_protocol(self, tx_proto):
         self.gpio = 17
         self.tx_proto = tx_proto
-        self.tx_repeat = tx_repeat
+        self.tx_repeat = PROTOCOLS[tx_proto].repeat_count
         self.tx_pulselength = PROTOCOLS[tx_proto].pulselength
         self.tx_repeat_delay = PROTOCOLS[tx_proto].repeat_delay
         self.tx_sync_count = PROTOCOLS[tx_proto].sync_count
         self.tx_sync_delay = PROTOCOLS[tx_proto].sync_delay
         self.tx_length = PROTOCOLS[tx_proto].msg_length
 
+    def get_total_tx_length(self):
+        return (self.tx_repeat * (
+                    (self.tx_pulselength * self.tx_length) +
+                    self.tx_sync_count * (self.tx_sync_delay + PROTOCOLS[self.tx_proto].sync_high + PROTOCOLS[self.tx_proto].sync_low)
+                    )
+                    + self.tx_repeat_delay * (self.tx_repeat - 1)
+                )
+
     def cleanup(self):
         """Disable TX and clean up GPIO."""
         _LOGGER.debug("Cleanup")
         self.controller.close()
 
-    def tx_code(self, codes):
+    def tx_code(self, code):
         """
         Send a decimal code.
         Optionally set protocol, pulselength and code length.
         When none given reset to default protocol, default pulselength and set code length to 40 bits.
         """
-        rawcodes = []
 
-        for code in codes:
-            rawcode = format(code, '#0{}b'.format(self.tx_length + 2))[2:]
-            _LOGGER.debug("TX code: " + str(rawcode))
-            rawcodes.append(rawcode)
-        return self._tx_bin(rawcodes)
+        rawcode = format(code, '#0{}b'.format(self.tx_length + 2))[2:]
+        _LOGGER.debug("TX code: " + str(rawcode))
+        return self._tx_bin(rawcode)
 
-    def _tx_bin(self, rawcodes):
+    def _tx_bin(self, rawcode):
         """Send a binary code, consider sync, delay and repeat parameters based on protocol."""
         #_LOGGER.debug("TX bin: {}" + str(rawcodes))
         sent = ""
-        # calculate delay between different codes
-        delay_between = 4 * (self.tx_pulselength * self.tx_length) + self.tx_sync_count * (self.tx_sync_delay + PROTOCOLS[self.tx_proto].sync_high + PROTOCOLS[self.tx_proto].sync_high)
 
-        for code in rawcodes:
-            for _ in range(0, self.tx_repeat):
-                for x in list(range(self.tx_sync_count)):
-                    if self._tx_sync():
-                        sent += "$"
+        for _ in range(0, self.tx_repeat):
+            for x in list(range(self.tx_sync_count)):
+                if self._tx_sync():
+                    sent += "$"
+                else:
+                    return False
+            if (self.tx_sync_delay > 0):
+                if (self._tx_delay(self.tx_sync_delay)):
+                    sent += "&"
+                else:
+                    return False
+            for byte in range(0, self.tx_length):
+                if rawcode[byte] == '0':
+                    if self._tx_l0():
+                        sent += "0"
                     else:
                         return False
-                if (self.tx_sync_delay > 0):
-                    if (self._tx_delay(self.tx_sync_delay)):
-                        sent += "&"
+                else:
+                    if self._tx_l1():
+                        sent += "1"
                     else:
                         return False
-                for byte in range(0, self.tx_length):
-                    if code[byte] == '0':
-                        if self._tx_l0():
-                            sent += "0"
-                        else:
-                            return False
-                    else:
-                        if self._tx_l1():
-                            sent += "1"
-                        else:
-                            return False
-                if (self.tx_repeat_delay > 0):
-                    if self._tx_delay(self.tx_repeat_delay):
-                        sent += '|'
-                    else:
-                        return False
-            if self._tx_delay(delay_between):
-                sent += "#"
-            else:
-                return False
+            if (self.tx_repeat_delay > 0):
+                if self._tx_delay(self.tx_repeat_delay):
+                    sent += '|'
+                else:
+                    return False
         _LOGGER.debug("sent: {}".format(sent))
         return True
 
@@ -142,45 +140,35 @@ class RFDevice:
     def _tx_delay(self, delay):
         """Wait between repeats."""
         self.controller.off()
-        self._sleep((delay) / 1000000)
+        time.sleep((delay) / 1000000.0)
         return True
 
     def _tx_waveform(self, highpulses, lowpulses):
         """Send basic waveform."""
         self.controller.on()
-        self._sleep((highpulses * self.tx_pulselength) / 1000000)
+        time.sleep((highpulses * self.tx_pulselength) / 1000000.0)
         self.controller.off()
-        self._sleep((lowpulses * self.tx_pulselength) / 1000000)
+        time.sleep((lowpulses * self.tx_pulselength) / 1000000.0)
         return True
 
     def _tx_waveform_irregular(self, highpulses, lowpulses):
         """Send waveform without using regular pulse length."""
         self.controller.on()
-        self._sleep((highpulses) / 1000000)
+        time.sleep((highpulses) / 1000000.0)
         self.controller.off()
-        self._sleep((lowpulses) / 1000000)
+        time.sleep((lowpulses) / 1000000.0)
         return True
 
-    def _sleep(self, delay):
-        _delay = delay / 100
-        end = time.time() + delay - _delay
-        while time.time() < end:
-            time.sleep(_delay)
-
     def tx_biactrl(self, xtype, device, command):
-        command_list = []
         if (xtype == 'light'):
             tx_proto = 2
-            repeat = 4
         elif (xtype == 'cover'):
             tx_proto = 1
-            repeat = 6
         try:
             cmd = DEVICE_CODES.get(xtype).get(device).get(command)
             if (cmd):
-                self.set_protocol(tx_proto, repeat)
-                command_list.append(cmd)
-                self.tx_code(command_list)
+                self.set_protocol(tx_proto)
+                self.tx_code(cmd)
                 _LOGGER.info(cmd)
             return True
         except Exception as e:
@@ -285,9 +273,8 @@ if __name__ == '__main__':
             except Exception as e:
                 _LOGGER.error(str(e))
                 _LOGGER.error(traceback.format_exc())
-            finally:
-                _LOGGER.info(f'Cleaning up GPIO ports!')
 
-            time.sleep(0.2)
+            time.sleep(4 * (rf.get_total_tx_length() / 1000000.0))
         time.sleep(0.1)
         schedule.run_pending()
+        
