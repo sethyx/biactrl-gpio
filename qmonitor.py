@@ -30,7 +30,7 @@ RFProtocol = namedtuple('RFProtocol',
                        'one_high', 'one_low', 'repeat_count'])
 
 PROTOCOLS = (None,
-             RFProtocol(100, 40, 10000, 1, 0, 5000, 1500, 3, 8, 7, 4, 6), # "home smart" shutter
+             RFProtocol(20, 40, 10000, 1, 0, 5000, 1472, 17, 37, 35, 19, 6), # "home smart" shutter
              RFProtocol(300, 24, 0, 1, 0, 300, 9000, 1, 3, 3, 1, 4) # LED controller
              )
 
