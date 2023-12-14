@@ -30,7 +30,7 @@ RFProtocol = namedtuple('RFProtocol',
                        'one_high', 'one_low', 'repeat_count'])
 
 PROTOCOLS = (None,
-             RFProtocol(20, 40, 10000, 1, 0, 5000, 1472, 17, 37, 35, 19, 6), # "home smart" shutter
+             RFProtocol(20, 40, 10000, 1, 0, 5000, 1472, 17, 37, 35, 19, 4), # "home smart" shutter
              RFProtocol(300, 24, 0, 1, 0, 300, 9000, 1, 3, 3, 1, 4) # LED controller
              )
 
@@ -168,9 +168,14 @@ class RFDevice:
             cmd = DEVICE_CODES.get(xtype).get(device).get(command)
             if (cmd):
                 self.set_protocol(tx_proto)
-                self.tx_code(cmd)
                 _LOGGER.info(cmd)
-            return True
+                if (xtype == 'cover'):
+                    self.tx_code(cmd)
+                    time.sleep(2 * (rf.get_total_tx_length() / 1000000.0))
+                self.tx_code(cmd)
+                time.sleep(2 * (rf.get_total_tx_length() / 1000000.0))
+                return True
+            return False
         except Exception as e:
             _LOGGER.error(f"exception while sending command: {e}")
             _LOGGER.error(traceback.format_exc())
@@ -211,13 +216,11 @@ def update_device_state(xtype, device, cmd):
     dbcon.commit()
 
 def verify_command(xtype, device, cmd):
-    if (xtype not in DEVICE_CODES):
+    try:
+        cmd = DEVICE_CODES.get(xtype).get(device).get(cmd)
+        return True
+    except:
         return False
-    if (device not in DEVICE_CODES.get(xtype)):
-        return False
-    if (cmd not in DEVICE_CODES.get(xtype).get(device)):
-        return False
-    return True
 
 def setup_device_codes_from_db():
     result = dbcon.execute('SELECT d.type,d.id,c.command,c.code FROM devices d, commands c WHERE d.id=c.device_id')
@@ -254,6 +257,7 @@ if __name__ == '__main__':
                 now = datetime.datetime.now()
                 tstamp = datetime.datetime.fromtimestamp(data.get('time'))
                 since = (now-tstamp).total_seconds()
+                _LOGGER.info(data)
                 _LOGGER.info(f"happened {since} ago")
                 if (since > 10):
                     remove_queue_file(f)
@@ -273,8 +277,7 @@ if __name__ == '__main__':
             except Exception as e:
                 _LOGGER.error(str(e))
                 _LOGGER.error(traceback.format_exc())
-
-            time.sleep(4 * (rf.get_total_tx_length() / 1000000.0))
+        
         time.sleep(0.1)
         schedule.run_pending()
         
