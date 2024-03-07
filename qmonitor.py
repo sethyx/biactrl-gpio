@@ -30,7 +30,7 @@ RFProtocol = namedtuple('RFProtocol',
                        'one_high', 'one_low', 'repeat_count'])
 
 PROTOCOLS = (None,
-             RFProtocol(20, 40, 10000, 1, 0, 5000, 1472, 17, 37, 35, 19, 4), # "home smart" shutter
+             RFProtocol(20, 40, 10000, 1, 0, 5000, 1472, 17, 37, 35, 19, 6), # "home smart" shutter
              RFProtocol(300, 24, 0, 1, 0, 300, 9000, 1, 3, 3, 1, 4) # LED controller
              )
 
@@ -169,9 +169,6 @@ class RFDevice:
             if (cmd):
                 self.set_protocol(tx_proto)
                 _LOGGER.info(cmd)
-                if (xtype == 'cover'):
-                    self.tx_code(cmd)
-                    time.sleep(2 * (rf.get_total_tx_length() / 1000000.0))
                 self.tx_code(cmd)
                 time.sleep(2 * (rf.get_total_tx_length() / 1000000.0))
                 return True
@@ -191,6 +188,11 @@ def update_cover_final_state(device, state):
 def update_device_state(xtype, device, cmd):
     cur = dbcon.cursor()
     if (xtype == 'cover'):
+        if ('_all' in device):
+            group = device.split('_')[0]
+            group_devs_cur = dbcon.execute(f"SELECT id FROM devices where type='cover' and id like '{group}_%' and id not like '%_all'")
+            for group_dev in group_devs_cur.fetchall():
+                update_device_state(xtype, group_dev, cmd)
         # cancel if we have any pending jobs for this device
         selcur = dbcon.execute(f"SELECT state FROM devices where type='cover' and id='{device}'")
         current_state = selcur.fetchone()[0]
